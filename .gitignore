@@ -10,4 +10,3 @@ evidence/*.tar.gz
 
 # Local review records document candidate-only paths and checks.
 review/
-PUBLICATION-BLOCKERS.md
