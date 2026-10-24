@@ -1,0 +1,13 @@
+# Build and runtime outputs are deliberately excluded from the source release.
+target/
+results/
+**/__pycache__/
+.DS_Store
+*.log
+
+# The reviewed archive is a future release asset, not source-control content.
+evidence/*.tar.gz
+
+# Local review records document candidate-only paths and checks.
+review/
+PUBLICATION-BLOCKERS.md
