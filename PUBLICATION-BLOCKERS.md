@@ -6,13 +6,14 @@ deployment until every blocker below is resolved.
 1. **No immutable public source reference exists.** The original lab directory
    is not a Git repository. Create and review a clean local source commit, then
    create a public remote and release tag only after approval.
-2. **No license has been selected.** The original lab has no license or notice
-   file. Choose a license before public distribution.
-3. **The preserved evidence archive is not public-safe as-is.** Its mapping and
-   historical records include absolute local paths such as
-   `/Users/<local-account>/kafka-crash-lab/...`. Preserve the original bytes and
-   checksum, but conduct a privacy review before releasing an explicitly named
-   derivative with a new checksum and change record.
+2. **MIT is selected for this repository's code and documentation.** `LICENSE`
+   records Copyright (c) 2026 Jeshwin William James. Preserve third-party
+   notices and licenses; this selection does not apply to dependencies, Docker
+   images, the website, EffectGuard, or other projects.
+3. **The derivative is review-ready, not approved for publication.** Its
+   transformation log, mapping, checksums, and validation report require final
+   privacy review. The private upstream archive remains unchanged and excluded
+   from the public-source package.
 4. **No public URLs exist yet.** Repository, immutable commit/release,
    reproduction guide, evidence index, archive, and checksum URLs must all be
    verified after publication and before the website article is enabled.

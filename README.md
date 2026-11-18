@@ -7,7 +7,19 @@
 
 This educational lab makes Kafka consumer/database crash windows observable. It uses a single manually assigned Kafka partition, PostgreSQL, explicit consumer-group offsets, and a fixed credit amount of `100`.
 
+## License
+
+The Kafka crash-lab code and accompanying documentation in this repository are
+licensed under the [MIT License](LICENSE), Copyright (c) 2026 Jeshwin William
+James. This license does not alter licenses or notices for third-party
+dependencies, Docker images, Kafka, PostgreSQL, or material outside this
+repository.
+
 The tested campaign runtime was Homebrew OpenJDK **21.0.12.1**. Do not substitute a newer JDK with `--release 21`: the consumer and controller processes must execute on Java 21.
+
+## Shell conventions
+
+All multi-command sequences in this README and the reproduction guide use **Bash**. Start each sequence with `set -euo pipefail` unless it intentionally captures a command failure. The direct concurrency harness example below captures its exit status explicitly.
 
 ## Prerequisites
 
@@ -67,6 +79,8 @@ The commands above establish the original environment: Kafka at `localhost:9092`
 With Java 21 selected and the original environment running:
 
 ```bash
+set -euo pipefail
+mkdir -p results
 python3 scripts/run_m2.py 1a  # database-first baseline
 python3 scripts/run_m2.py 1b  # offset-first baseline
 python3 scripts/run_m2.py 1c  # dedup database-first baseline
@@ -85,7 +99,7 @@ python3 scripts/run_m3_remaining.py 12
 
 `run_m3_remaining.py` is historical and hard-codes `compose.yaml`; it is valid only for the original environment. For isolated fresh replacements of cases 10–12, use the versioned controller in [docs/m5/reproduction.md](docs/m5/reproduction.md).
 
-Most controllers write a unique directory under `results/`. Direct `M3ConcurrencyHarness` invocations only emit NDJSON to stdout: give every run a unique ID and capture stdout, stderr, and exit status explicitly, for example `run_id=manual-case8-$(date +%Y%m%dT%H%M%S); java -cp 'target/classes:target/dependency/*' com.jeshwin.crashlab.M3ConcurrencyHarness commit "$run_id" > "results/$run_id.stdout.ndjson" 2> "results/$run_id.stderr.log"; printf '%s\n' "$?" > "results/$run_id.exit-status.txt"`. Preserve failed or invalid outputs too.
+Most controllers write a unique directory under `results/`. Direct `M3ConcurrencyHarness` invocations only emit NDJSON to stdout. In Bash, give every run a unique ID and capture stdout, stderr, and exit status explicitly: `run_id="manual-case8-$(date +%Y%m%dT%H%M%S)"; set +e; java -cp 'target/classes:target/dependency/*' com.jeshwin.crashlab.M3ConcurrencyHarness commit "$run_id" > "results/$run_id.stdout.ndjson" 2> "results/$run_id.stderr.log"; status=$?; set -e; printf '%s\n' "$status" > "results/$run_id.exit-status.txt"`. Preserve failed or invalid outputs too.
 
 ## Documentation and reviewed evidence
 
@@ -97,10 +111,12 @@ Most controllers write a unique directory under `results/`. Direct `M3Concurrenc
 - [Editorial handoff](docs/m5/editorial-handoff.md)
 - [Evidence index](EVIDENCE-INDEX.md)
 - [Local release notes](RELEASE-NOTES.md)
+- [Proposed publication commands](docs/m5/publication-commands.md)
 - [Publication blockers](PUBLICATION-BLOCKERS.md)
 
-The reviewed supplemental archive is intentionally stored at
-`evidence/m4-supplemental-review-corrected.tar.gz`. Its SHA-256 is recorded in
-the adjacent `.sha256` file and in `EVIDENCE-INDEX.md`. It is preserved
-byte-for-byte for review and is **not** ready for public upload until the
-privacy blockers are resolved.
+The local public-evidence derivative is stored at
+`evidence/public-derivatives/m4-public-evidence-derivative-20261118-r3.tar.gz`.
+Its new checksum, transformation log, validation report, and archive-relative
+mapping are described in `EVIDENCE-INDEX.md`. It remains a local review asset;
+the MIT license is selected, while final privacy review and publication approval
+remain required.

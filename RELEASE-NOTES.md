@@ -7,17 +7,19 @@ release, remote repository, tag, upload, or deployment.
 
 - Repository name: `kafka-consumer-crash-lab`
 - First public release tag: `v1.0.0`
-- Evidence asset role: reviewed supplemental archive plus a separately approved
-  public-safe derivative, if required by privacy review.
+- Evidence asset role: local public-evidence derivative prepared for review;
+  publication remains pending approval.
 - Proposed URLs: `<unpublished>` until a repository and release are created.
+- License: MIT for this repository's code and documentation only; third-party
+  licenses/notices remain in force.
 
 ## Candidate contents
 
 - Actual Java 21 Maven source, JUnit tests, SQL migrations, Docker Compose
   configurations, and Python standard-library controllers.
 - The current documentation set under `docs/m5/`.
-- The exact reviewed archive
-  `m4-supplemental-review-corrected.tar.gz` and its existing SHA-256 file.
+- The separately identified public-evidence derivative and its new checksum.
+  The private upstream review archive remains outside the public-source package.
 - Candidate-only release review metadata under the repository root and
   `review/`.
 
@@ -40,3 +42,11 @@ retains its own campaign, source, build, and execution identity records.
 
 See `review/PACKAGING-CHANGES.md` and `review/SECURITY-EXCLUSIONS.md` for
 details.
+
+## Proposed publication commands (do not run without explicit approval)
+
+The proposed owner is `jeshwinwilliam`, repository name is
+`kafka-consumer-crash-lab`, and initial release is `v1.0.0`. After a reviewed
+local commit exists and publication is explicitly approved, create the remote,
+push the selected commit, tag it, and attach the licensed source package using
+the owner-approved Git identity. These actions remain intentionally unexecuted.

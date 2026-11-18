@@ -3,6 +3,7 @@ target/
 results/
 **/__pycache__/
 .DS_Store
+._*
 *.log
 
 # The reviewed archive is a future release asset, not source-control content.
