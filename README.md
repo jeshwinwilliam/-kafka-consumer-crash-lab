@@ -1,122 +1,261 @@
-# Kafka crash-window laboratory
+# Kafka Consumer Crash Lab
 
-> **Local public-release candidate, not published.** This candidate packages the
-> reviewed lab source and an unchanged evidence archive for review only. It has
-> no public repository, release, or immutable public URL yet. See
-> `PUBLICATION-BLOCKERS.md` before any upload.
+What happens when a Kafka consumer commits a database transaction, then crashes before committing its offset?
 
-This educational lab makes Kafka consumer/database crash windows observable. It uses a single manually assigned Kafka partition, PostgreSQL, explicit consumer-group offsets, and a fixed credit amount of `100`.
+The database keeps the change. Kafka can deliver the record again. Whether that replay causes a second business effect depends on how the consumer handles it.
 
-## License
+This Java 21 and PostgreSQL lab examines that gap. It compares three processing strategies, deliberately stops the consumer at specific commit boundaries, and checks the durable state after restart.
 
-The Kafka crash-lab code and accompanying documentation in this repository are
-licensed under the [MIT License](LICENSE), Copyright (c) 2026 Jeshwin William
-James. This license does not alter licenses or notices for third-party
-dependencies, Docker images, Kafka, PostgreSQL, or material outside this
-repository.
+**Read the article:** [When a Kafka Consumer Crashes After a Database Commit](https://www.jeshwin.com/articles/when-a-kafka-consumer-crashes-after-a-database-commit/)
 
-The tested campaign runtime was Homebrew OpenJDK **21.0.12.1**. Do not substitute a newer JDK with `--release 21`: the consumer and controller processes must execute on Java 21.
+[Reproduction guide](docs/m5/reproduction.md) · [Results matrix](docs/m5/results-matrix.md) · [Evidence index](EVIDENCE-INDEX.md) · [v1.0.0 release](https://github.com/jeshwinwilliam/-kafka-consumer-crash-lab/releases/tag/v1.0.0)
 
-## Shell conventions
+## What the lab compares
 
-All multi-command sequences in this README and the reproduction guide use **Bash**. Start each sequence with `set -euo pipefail` unless it intentionally captures a command failure. The direct concurrency harness example below captures its exit status explicitly.
+Each event credits an account by **100** units. The consumer reads from one manually assigned Kafka partition, with automatic offset commits disabled.
 
-## Prerequisites
+| Strategy | Order of work | Failure demonstrated |
+| --- | --- | --- |
+| Database first | Commit the credit, then commit the Kafka offset | A crash between commits allows replay to apply the credit again. |
+| Offset first | Commit the Kafka offset, then commit the credit | A crash between commits advances consumption past a credit that was never applied. |
+| Database deduplication | Insert the event identity and apply the credit in one PostgreSQL transaction, then commit the offset | Replay finds the retained identity and skips a matching credit that was already applied. |
 
-- Docker Desktop with `docker compose`
-- Homebrew `openjdk@21` and Maven 3.9.x
-- Python 3 for the standard-library controllers; Python 3.14.4 is the recorded campaign runtime, not an asserted minimum supported version
-- Local ports `9092`, `5433` for the original environment; `19092`, `15433` for the fresh environment
+The third strategy protects the database effect within the lab's assumptions. It does not prevent Kafka redelivery or place PostgreSQL and Kafka in a single transaction.
 
-Select Java 21 in every shell that builds or launches Java:
+## Architecture
+
+The controller starts a scenario and waits for a known execution phase before stopping the consumer. Separate database and offset queries establish what survived. A log message alone is not treated as proof of a commit.
+
+```mermaid
+flowchart TD
+    Controller["Scenario controller"]
+    Consumer["Java 21 consumer"]
+    Kafka["Kafka: one assigned partition"]
+    Database["PostgreSQL: account and event identities"]
+    Evidence["Evidence: logs and durable-state snapshots"]
+
+    Controller -->|"Start, observe phase, stop, restart"| Consumer
+    Kafka -->|"Credit event"| Consumer
+    Consumer -->|"Database transaction"| Database
+    Consumer -->|"Explicit offset commit"| Kafka
+    Controller -->|"Independent database queries"| Database
+    Controller -->|"Independent offset queries"| Kafka
+    Controller -->|"Capture observations"| Evidence
+```
+
+In deduplication mode, the event key is `(handler_scope, event_id)`. Its insertion and the account update share one database transaction.
+
+Matching duplicates skip the credit. Conflicting account or amount values are rejected. Deleting a retained identity removes that replay protection.
+
+## What the recorded runs show
+
+For the single-record fixture, committed offset **1** is the next position to consume after processing offset **0**.
+
+| Scenario | Recorded outcome |
+| --- | --- |
+| No crash | Balance 100; committed offset 1. |
+| Database-first crash after the database commit | Balance 100 before restart, then 200 after replay. |
+| Offset-first crash after the offset commit | Balance remains 0; committed offset is already 1. |
+| Deduplication crash after the database commit | Replay leaves balance at 100 with one retained event identity. |
+| Deduplication crash before the database commit | The transaction rolls back; restart applies the credit once. |
+| Two concurrent copies of the same event | The second transaction waits on the database conflict. Its eventual action depends on whether the first commits or rolls back. |
+| Delete the deduplication key, then deliberately replay | The credit can be applied again. |
+
+The retained evidence includes a **90-trial repeatability campaign**, seven separate frozen-source coverage runs, and 14 accepted fresh executions.
+
+These are different evidence sets, not 111 different scenarios. The [results matrix](docs/m5/results-matrix.md) and [evidence guide](docs/m5/evidence-guide.md) explain the coverage and its limits.
+
+## Requirements
+
+- Docker with `docker compose`.
+- Java **21** for compilation and execution. The recorded campaign used Homebrew OpenJDK **21.0.12.1**.
+- Maven 3.9.x.
+- Python 3 for the standard-library scenario controllers. The recorded campaign used Python **3.14.4**; this is not an asserted minimum supported version.
+- Available local ports for the selected environment.
+
+| Environment | Kafka | PostgreSQL |
+| --- | --- | --- |
+| Original | `localhost:9092` | `localhost:5433` |
+| Isolated fresh reproduction | `localhost:19092` | `localhost:15433` |
+
+The examples below use **Bash** and the original environment. For isolated fresh reproduction, follow the [reproduction guide](docs/m5/reproduction.md), including its endpoint and Compose-project settings.
+
+### Select Java 21
+
+On macOS with Homebrew:
 
 ```bash
+set -euo pipefail
+
 export JAVA_HOME="$(brew --prefix openjdk@21)/libexec/openjdk.jdk/Contents/Home"
 export PATH="$JAVA_HOME/bin:$PATH"
+
 java -version
 javac -version
 mvn -version
 ```
 
-All three version commands should identify Java 21.
+Check that `java` and `javac` identify Java 21 and that Maven reports running on Java 21.
 
-## Service setup, schema, build, and test
+Compiling with `--release 21` while executing on a newer JDK does not reproduce the recorded runtime.
 
-`DedupPostgresTest` calls `DatabaseWork.open()` and therefore requires PostgreSQL and the lab schema. Start and inspect services **before** testing.
+On another platform, point `JAVA_HOME` to your Java 21 installation and make the same checks. The recorded campaign ran on macOS with Apple Silicon; those results do not establish behavior on other platforms.
 
-```bash
-# Inspect first; do not recreate existing containers or data.
-docker compose -f compose.yaml config
-docker compose -f compose.yaml ps
-docker compose -f compose.yaml up -d --wait --wait-timeout 180
-```
+## Set up the original environment
 
-The original Compose file does not mount initialization SQL. For a deliberately new original-environment database, initialize its schema before tests:
-
-```bash
-docker compose -f compose.yaml exec -T postgres \
-  psql -U crashlab -d crashlab < sql/000_base_schema.sql
-docker compose -f compose.yaml exec -T postgres \
-  psql -U crashlab -d crashlab < sql/001_processed_events_identity.sql
-```
-
-Do not apply those files blindly to an existing database; inspect its schema and data first. With PostgreSQL available and schema initialized, build, test, and create the runtime dependency classpath:
-
-```bash
-JAVA_HOME="$(brew --prefix openjdk@21)/libexec/openjdk.jdk/Contents/Home" \
-PATH="$JAVA_HOME/bin:$PATH" \
-mvn clean test dependency:copy-dependencies -DincludeScope=runtime
-```
-
-The current-root controller classpath is `target/classes:target/dependency/*`. The frozen M4 evidence records four passing test methods; that is useful regression coverage, not exhaustive correctness proof.
-
-## Original environment
-
-The commands above establish the original environment: Kafka at `localhost:9092` and PostgreSQL at `localhost:5433`. Java defaults to those endpoints when `CRASHLAB_KAFKA_BOOTSTRAP` and `CRASHLAB_JDBC_URL` are unset.
-
-## Individual scenarios
-
-With Java 21 selected and the original environment running:
+Run commands from the repository root. Inspect the Compose configuration and existing services first:
 
 ```bash
 set -euo pipefail
+
+docker compose -f compose.yaml config
+docker compose -f compose.yaml ps
+```
+
+For a new lab environment, start the services:
+
+```bash
+set -euo pipefail
+
+docker compose -f compose.yaml up -d --wait --wait-timeout 180
+```
+
+If you already have lab containers or data, inspect them before proceeding. `compose up` can recreate containers when their configuration has changed.
+
+### Initialize a new database
+
+The original Compose file does not mount initialization SQL. For a deliberately new database, apply the schema in order:
+
+```bash
+set -euo pipefail
+
+docker compose -f compose.yaml exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U crashlab -d crashlab \
+  < sql/000_base_schema.sql
+
+docker compose -f compose.yaml exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U crashlab -d crashlab \
+  < sql/001_processed_events_identity.sql
+```
+
+For an existing database, inspect its schema and data before applying either file.
+
+### Build and test
+
+With Java 21 selected and PostgreSQL initialized:
+
+```bash
+set -euo pipefail
+
+mvn clean test dependency:copy-dependencies -DincludeScope=runtime
+```
+
+`DedupPostgresTest` opens a real database connection, so PostgreSQL and the schema must be ready before testing.
+
+The frozen M4 evidence records four passing test methods. That provides regression coverage, not exhaustive correctness proof.
+
+The controllers use this runtime classpath:
+
+```text
+target/classes:target/dependency/*
+```
+
+The commands below assume the original endpoints. Check any existing `CRASHLAB_KAFKA_BOOTSTRAP` and `CRASHLAB_JDBC_URL` overrides before running them.
+
+## Run the scenarios
+
+These controllers deliberately crash consumers and change lab state. Run scenarios sequentially in the intended environment and preserve their outputs.
+
+```bash
+set -euo pipefail
+
 mkdir -p results
-python3 scripts/run_m2.py 1a  # database-first baseline
-python3 scripts/run_m2.py 1b  # offset-first baseline
-python3 scripts/run_m2.py 1c  # dedup database-first baseline
-python3 scripts/run_m2.py 2   # db-first, post-DB-commit crash
-python3 scripts/run_m2.py 3   # offset-first, post-offset-commit crash
-python3 scripts/run_m2.py 4   # dedup, post-DB-commit crash
-python3 scripts/run_m2.py 5   # dedup, pre-DB-commit crash
-python3 scripts/run_m2.py 6   # dedup, post-both-commits crash
+
+# No-crash baselines
+python3 scripts/run_m2.py 1a  # Database first
+python3 scripts/run_m2.py 1b  # Offset first
+python3 scripts/run_m2.py 1c  # Database deduplication
+
+# Crash-window scenarios
+python3 scripts/run_m2.py 2   # Database first: after database commit
+python3 scripts/run_m2.py 3   # Offset first: after offset commit
+python3 scripts/run_m2.py 4   # Deduplication: after database commit
+python3 scripts/run_m2.py 5   # Deduplication: before database commit
+python3 scripts/run_m2.py 6   # Deduplication: after both commits
+
+# Same event identity at two Kafka offsets
 python3 scripts/run_m3_case7.py
-java -cp 'target/classes:target/dependency/*' com.jeshwin.crashlab.M3ConcurrencyHarness commit manual-case8
-java -cp 'target/classes:target/dependency/*' com.jeshwin.crashlab.M3ConcurrencyHarness rollback manual-case9
+
+# Missing account, distinct event IDs, and deduplication retention
 python3 scripts/run_m3_remaining.py 10
 python3 scripts/run_m3_remaining.py 11
 python3 scripts/run_m3_remaining.py 12
 ```
 
-`run_m3_remaining.py` is historical and hard-codes `compose.yaml`; it is valid only for the original environment. For isolated fresh replacements of cases 10–12, use the versioned controller in [docs/m5/reproduction.md](docs/m5/reproduction.md).
+Most controllers create a unique directory under `results/`. Check the captured state and verdict rather than relying only on the command finishing.
 
-Most controllers write a unique directory under `results/`. Direct `M3ConcurrencyHarness` invocations only emit NDJSON to stdout. In Bash, give every run a unique ID and capture stdout, stderr, and exit status explicitly: `run_id="manual-case8-$(date +%Y%m%dT%H%M%S)"; set +e; java -cp 'target/classes:target/dependency/*' com.jeshwin.crashlab.M3ConcurrencyHarness commit "$run_id" > "results/$run_id.stdout.ndjson" 2> "results/$run_id.stderr.log"; status=$?; set -e; printf '%s\n' "$status" > "results/$run_id.exit-status.txt"`. Preserve failed or invalid outputs too.
+`run_m3_remaining.py` is a historical controller that hard-codes `compose.yaml`. Use it only with the original environment. Fresh replacements for cases 10–12 are documented in the [reproduction guide](docs/m5/reproduction.md).
 
-## Documentation and reviewed evidence
+### Capture a concurrency run
 
-- [Reproduction guide](docs/m5/reproduction.md)
-- [Commit-boundary diagrams](docs/m5/commit-boundaries.md)
-- [Results matrix](docs/m5/results-matrix.md)
-- [Evidence guide](docs/m5/evidence-guide.md)
-- [Limitations](docs/m5/limitations.md)
-- [Editorial handoff](docs/m5/editorial-handoff.md)
-- [Evidence index](EVIDENCE-INDEX.md)
-- [Local release notes](RELEASE-NOTES.md)
-- [Proposed publication commands](docs/m5/publication-commands.md)
-- [Publication blockers](PUBLICATION-BLOCKERS.md)
+The direct concurrency harness writes NDJSON to stdout rather than creating its own evidence directory. Capture stdout, stderr, and the exit status explicitly:
 
-The local public-evidence derivative is stored at
-`evidence/public-derivatives/m4-public-evidence-derivative-20261118-r3.tar.gz`.
-Its new checksum, transformation log, validation report, and archive-relative
-mapping are described in `EVIDENCE-INDEX.md`. It remains a local review asset;
-the MIT license is selected, while final privacy review and publication approval
-remain required.
+```bash
+set -euo pipefail
+
+mkdir -p results
+run_id="manual-case8-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+
+set +e
+java -cp 'target/classes:target/dependency/*' \
+  com.jeshwin.crashlab.M3ConcurrencyHarness commit "$run_id" \
+  > "results/$run_id.stdout.ndjson" \
+  2> "results/$run_id.stderr.log"
+status=$?
+set -e
+
+printf '%s\n' "$status" > "results/$run_id.exit-status.txt"
+```
+
+For case 9, use `rollback` instead of `commit` and a new run ID. Keep failed or invalid outputs alongside successful ones.
+
+## Evidence and reproduction
+
+The public [v1.0.0 release](https://github.com/jeshwinwilliam/-kafka-consumer-crash-lab/releases/tag/v1.0.0) provides the source archive, public evidence derivative, and checksum files.
+
+The repository also includes the public derivative at:
+
+```text
+evidence/public-derivatives/m4-public-evidence-derivative-20261118-r3.tar.gz
+```
+
+This is a separately identified, privacy-reviewed derivative of the retained evidence. Its checksums describe the public bytes. See [EVIDENCE-INDEX.md](EVIDENCE-INDEX.md) for the transformation record, validation report, and archive-relative mapping.
+
+Some documents retained from release preparation describe the project as a local candidate or refer to pending publication. Those statements describe that preparation stage. The public release and article linked above are the publication references.
+
+The v1.0.0 source and archives remain historical records. Later documentation corrections should be ordinary new commits rather than replacements of released assets.
+
+| Document | What it covers |
+| --- | --- |
+| [Reproduction guide](docs/m5/reproduction.md) | Environment setup and original/fresh execution instructions. |
+| [Commit boundaries](docs/m5/commit-boundaries.md) | Where each strategy commits database state and Kafka progress. |
+| [Results matrix](docs/m5/results-matrix.md) | Scenario outcomes and coverage. |
+| [Evidence guide](docs/m5/evidence-guide.md) | How to read the captured observations. |
+| [Evidence index](EVIDENCE-INDEX.md) | Evidence provenance, public derivative, and checksums. |
+| [Limitations](docs/m5/limitations.md) | Assumptions and guarantees the lab does not establish. |
+
+## Limits of the demonstration
+
+This lab focuses on consumer-process crashes around database and offset commits. It uses one manually assigned partition, serial processing, and a fixed credit amount.
+
+It does not establish correctness during broker failures, database crashes, network partitions, consumer-group rebalances, or multi-partition processing. Bounded empty-poll observations do not prove that a record can never be delivered again. Repeatable results in this fixture are not statistical proof of general reliability.
+
+Deduplication depends on stable event identities, retained keys, correct conflict handling, and keeping the identity insertion and business update in the same PostgreSQL transaction. It does not protect arbitrary external API calls or other effects outside that transaction.
+
+This is an educational demonstration of established patterns, not a production framework or a claim of universal exactly-once processing.
+
+## License
+
+Copyright (c) 2026 Jeshwin William James.
+
+The code and accompanying repository documentation are available under the [MIT License](LICENSE). Third-party dependencies, container images, Kafka, and PostgreSQL retain their own licenses and notices.
