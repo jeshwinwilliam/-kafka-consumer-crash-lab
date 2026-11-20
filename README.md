@@ -1,14 +1,22 @@
 # Kafka Consumer Crash Lab
 
-What happens when a Kafka consumer commits a database transaction, then crashes before committing its offset?
+A reproducible Java 21, Kafka, and PostgreSQL lab exploring what happens when a consumer crashes between a database transaction and a Kafka offset commit.
 
-The database keeps the change. Kafka can deliver the record again. Whether that replay causes a second business effect depends on how the consumer handles it.
+**Technical article:** [When a Kafka Consumer Crashes After a Database Commit](https://www.jeshwin.com/articles/when-a-kafka-consumer-crashes-after-a-database-commit/)
 
-This Java 21 and PostgreSQL lab examines that gap. It compares three processing strategies, deliberately stops the consumer at specific commit boundaries, and checks the durable state after restart.
-
-**Read the article:** [When a Kafka Consumer Crashes After a Database Commit](https://www.jeshwin.com/articles/when-a-kafka-consumer-crashes-after-a-database-commit/)
+**GitHub repository:** [Kafka Consumer Crash Lab](https://github.com/jeshwinwilliam/-kafka-consumer-crash-lab)
 
 [Reproduction guide](docs/m5/reproduction.md) · [Results matrix](docs/m5/results-matrix.md) · [Evidence index](EVIDENCE-INDEX.md) · [v1.0.0 release](https://github.com/jeshwinwilliam/-kafka-consumer-crash-lab/releases/tag/v1.0.0)
+
+## Why this lab exists
+
+A consumer processes a record, updates PostgreSQL, and then crashes before committing its Kafka offset.
+
+The database change survives. Kafka can deliver the record again. Without duplicate handling, the same business operation may run twice.
+
+Reversing the commit order creates a different problem: the consumer can advance its offset before the database change is durable.
+
+This lab makes both failure windows observable. It compares three processing strategies, deliberately stops the consumer at specific boundaries, and checks the database state and committed offsets after restart.
 
 ## What the lab compares
 
@@ -253,6 +261,13 @@ It does not establish correctness during broker failures, database crashes, netw
 Deduplication depends on stable event identities, retained keys, correct conflict handling, and keeping the identity insertion and business update in the same PostgreSQL transaction. It does not protect arbitrary external API calls or other effects outside that transaction.
 
 This is an educational demonstration of established patterns, not a production framework or a claim of universal exactly-once processing.
+
+## Author
+
+Built and documented by **Jeshwin William James**.
+
+- [Website](https://www.jeshwin.com/)
+- [GitHub](https://github.com/jeshwinwilliam)
 
 ## License
 
